@@ -1,0 +1,173 @@
+import tkinter
+import customtkinter
+import pandas as pd
+from tkinter import filedialog, messagebox
+from datetime import datetime
+from pathlib import Path
+
+# --- Configuración de la apariencia ---
+customtkinter.set_appearance_mode("System")
+customtkinter.set_default_color_theme("blue")
+
+class App(customtkinter.CTk):
+    def __init__(self):
+        super().__init__()
+
+        # --- Configuración de la ventana principal ---
+        self.title("Transformador PAI v9.1 (Notificaciones Claras)")
+        self.geometry(f"{750}x{520}")
+        self.resizable(False, False)
+
+        # --- Crear el Frame principal ---
+        self.main_frame = customtkinter.CTkFrame(self, corner_radius=15)
+        self.main_frame.pack(pady=20, padx=20, fill="both", expand=True)
+        self.main_frame.grid_columnconfigure(0, weight=1)
+
+        # --- Widgets de la Interfaz ---
+        self.label_base = customtkinter.CTkLabel(self.main_frame, text="1. Selecciona la Base PAI (.txt):", font=("Arial", 14, "bold"))
+        self.label_base.grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 5), sticky="w")
+        self.entry_base = customtkinter.CTkEntry(self.main_frame, placeholder_text="Tu archivo 'base pai.txt'", width=450)
+        self.entry_base.grid(row=1, column=0, padx=15, pady=5, sticky="we")
+        self.boton_base = customtkinter.CTkButton(self.main_frame, text="Seleccionar...", command=self.seleccionar_archivo_base)
+        self.boton_base.grid(row=1, column=1, padx=15, pady=5)
+
+        self.label_insumos = customtkinter.CTkLabel(self.main_frame, text="2. Selecciona tu archivo maestro de Insumos (.xlsx):", font=("Arial", 14, "bold"))
+        self.label_insumos.grid(row=2, column=0, columnspan=2, padx=15, pady=(15, 5), sticky="w")
+        self.entry_insumos = customtkinter.CTkEntry(self.main_frame, placeholder_text="Tu archivo 'Insumos.xlsx'", width=450)
+        self.entry_insumos.grid(row=3, column=0, padx=15, pady=5, sticky="we")
+        self.boton_insumos = customtkinter.CTkButton(self.main_frame, text="Seleccionar...", command=self.seleccionar_archivo_insumos)
+        self.boton_insumos.grid(row=3, column=1, padx=15, pady=5)
+        
+        self.label_fecha = customtkinter.CTkLabel(self.main_frame, text="3. Introduce la Fecha de Corte:", font=("Arial", 14, "bold"))
+        self.label_fecha.grid(row=4, column=0, columnspan=2, padx=15, pady=(15, 5), sticky="w")
+        self.entry_fecha = customtkinter.CTkEntry(self.main_frame, placeholder_text="AAAA-MM-DD (ej. 2025-08-01)")
+        self.entry_fecha.grid(row=5, column=0, columnspan=2, padx=15, pady=5, sticky="we")
+
+        self.boton_exportar = customtkinter.CTkButton(self.main_frame, text="Procesar y Exportar a Excel", height=50, font=("Arial", 18, "bold"), command=self.procesar_y_exportar)
+        self.boton_exportar.grid(row=6, column=0, columnspan=2, padx=15, pady=25, sticky="we")
+        self.label_estado = customtkinter.CTkLabel(self.main_frame, text="Listo para procesar.", text_color="gray")
+        self.label_estado.grid(row=7, column=0, columnspan=2, padx=15, pady=(5, 0), sticky="w")
+        self.progressbar = customtkinter.CTkProgressBar(self.main_frame)
+        self.progressbar.grid(row=8, column=0, columnspan=2, padx=15, pady=(5, 15), sticky="we")
+        self.progressbar.set(0)
+
+        self.ruta_archivo_base = ""
+        self.ruta_archivo_insumos = ""
+
+    def seleccionar_archivo_base(self):
+        ruta = filedialog.askopenfilename(title="Seleccionar Base PAI", filetypes=(("Archivos de texto", "*.txt"), ("Todos", "*.*")))
+        if ruta: self.ruta_archivo_base = ruta; self.entry_base.delete(0, "end"); self.entry_base.insert(0, ruta)
+
+    def seleccionar_archivo_insumos(self):
+        ruta = filedialog.askopenfilename(title="Seleccionar Archivo de Insumos", filetypes=(("Archivos Excel", "*.xlsx"),))
+        if ruta: self.ruta_archivo_insumos = ruta; self.entry_insumos.delete(0, "end"); self.entry_insumos.insert(0, ruta)
+
+    def calcular_edad(self, fecha_nac, fecha_corte):
+        if pd.isna(fecha_nac): return 0, 0
+        años = fecha_corte.year - fecha_nac.year
+        if (fecha_corte.month, fecha_corte.day) < (fecha_nac.month, fecha_nac.day): años -= 1
+        meses_totales = (fecha_corte.year - fecha_nac.year) * 12 + (fecha_corte.month - fecha_nac.month)
+        if fecha_corte.day < fecha_nac.day: meses_totales -= 1
+        return años, meses_totales
+
+    def procesar_y_exportar(self):
+        if not self.ruta_archivo_base or not self.ruta_archivo_insumos: messagebox.showwarning("Atención", "Por favor, selecciona ambos archivos."); return
+        fecha_corte_str = self.entry_fecha.get()
+        if not fecha_corte_str: messagebox.showwarning("Atención", "Por favor, introduce una fecha de corte."); return
+        try: fecha_corte = datetime.strptime(fecha_corte_str, '%Y-%m-%d')
+        except ValueError: messagebox.showerror("Error de Formato", "La fecha de corte debe tener el formato AAAA-MM-DD."); return
+
+        try:
+            self.progressbar.set(0); self.label_estado.configure(text="Iniciando proceso...", text_color="orange"); self.update_idletasks()
+            
+            df_base = pd.read_csv(self.ruta_archivo_base, sep='\t', engine='python', dtype={'COD_BDUA': str, 'COD_SIRIS': str, 'NUM_DOC': str})
+            df_ips = pd.read_excel(self.ruta_archivo_insumos, sheet_name='IPS Vacunadoras')
+            df_sucumbios = pd.read_excel(self.ruta_archivo_insumos, sheet_name='Sucumbios')
+            df_validacion = pd.read_excel(self.ruta_archivo_insumos, sheet_name='Validacion')
+            
+            columnas_originales = df_base.columns.tolist()
+            
+            municipios_a_reemplazar = ['PUERTO SANTANDER', 'TARAPACA', 'LA PEDRERA', 'EL ENCANTO', 'LA CHORRERA', 'PUERTO ALEGRIA', 'MIRITI - PARANA']
+            df_base.loc[df_base['MUNICIPIO'].isin(municipios_a_reemplazar), 'MUNICIPIO'] = 'AMAZONAS'
+            
+            fec_nac_temporal = pd.to_datetime(df_base['FEC_NAC'], errors='coerce')
+            edades = fec_nac_temporal.apply(lambda x: self.calcular_edad(x, fecha_corte))
+            df_base['AÑOS'], df_base['MESES'] = [e[0] for e in edades], [e[1] for e in edades]
+            
+            df_base['CLASIFICACION ESTADO'] = '1'
+            deptos_fa = ["AMAZONAS", "VAUPES", "META", "VICHADA", "PUTUMAYO", "HUILA", "TOLIMA"]
+            df_base.loc[df_base['DEPARTAMENTO'].str.upper().isin(deptos_fa), 'ZONA_SUSCEPTIBLE_FIEBRE_AMARILLA'] = 'SI'
+            siris_sucumbios = set(df_sucumbios['codsiris'].astype(str))
+            df_base.loc[df_base['COD_SIRIS'].isin(siris_sucumbios), 'SUCUMBIOS'] = 'SI'
+            
+            df_final = pd.merge(df_base, df_ips, on=['DEPARTAMENTO', 'MUNICIPIO', 'IPS_PRIMARIA'], how='left', suffixes=('', '_nueva'))
+            df_final['IPS_VACUNADORA'] = df_final['IPS_VACUNADORA_nueva'].fillna(df_final['IPS_VACUNADORA'])
+            
+            for col in ['CLASIFICACION ESTADO', 'DEPARTAMENTO', 'MUNICIPIO', 'IPS_VACUNADORA']: df_final[col] = df_final[col].astype(str)
+            df_final['IPS_CONCATENADA'] = df_final[['CLASIFICACION ESTADO', 'DEPARTAMENTO', 'MUNICIPIO', 'IPS_VACUNADORA']].agg(''.join, axis=1)
+            
+            self.label_estado.configure(text="Validando registros..."); self.update_idletasks()
+            columnas_validacion = ['DEPARTAMENTO', 'MUNICIPIO', 'IPS VACUNADORA']
+            for col in columnas_validacion: df_validacion[col] = df_validacion[col].astype(str)
+            df_validacion['llave_valida'] = df_validacion[columnas_validacion].agg(''.join, axis=1)
+            ips_validas = set(df_validacion['llave_valida'])
+            df_final['llave_temporal'] = df_final['DEPARTAMENTO'] + df_final['MUNICIPIO'] + df_final['IPS_VACUNADORA']
+            df_final['ES_VALIDA'] = df_final['llave_temporal'].isin(ips_validas)
+            
+            df_validos = df_final[df_final['ES_VALIDA'] == True][columnas_originales]
+            df_errores_raw = df_final[df_final['ES_VALIDA'] == False]
+            
+            if not df_errores_raw.empty:
+                self.label_estado.configure(text=f"Validación completa. Se encontraron {len(df_errores_raw)} registros con errores.", text_color="orange")
+            else:
+                self.label_estado.configure(text="Validación completa. ¡No se encontraron errores!", text_color="green")
+            self.update_idletasks()
+
+            ruta_destino = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Archivo de Excel", "*.xlsx")], title="Guardar archivo de datos VÁLIDOS como...")
+            if not ruta_destino: self.progressbar.set(0); self.label_estado.configure(text="Exportación cancelada.", text_color="gray"); return
+            
+            self.exportar_con_encabezados_de_color(df_validos, ruta_destino)
+            
+            mensaje_final = f"Proceso completado.\n\nArchivo de datos válidos guardado en:\n{ruta_destino}"
+            if not df_errores_raw.empty:
+                columnas_reporte = ['DEPARTAMENTO', 'MUNICIPIO', 'IPS_VACUNADORA']
+                df_reporte_errores = df_errores_raw[columnas_reporte].drop_duplicates().reset_index(drop=True)
+                
+                nombre_archivo_errores = f"ERRORES_COMBINACIONES_{Path(ruta_destino).name}"
+                ruta_errores = Path(ruta_destino).with_name(nombre_archivo_errores)
+                df_reporte_errores.to_excel(ruta_errores, index=False)
+                mensaje_final += f"\n\n¡Atención! Se encontraron {len(df_reporte_errores)} combinaciones de IPS no válidas.\nSe generó un reporte único en:\n{ruta_errores}"
+            else:
+                mensaje_final += "\n\n¡Excelente! No se encontraron errores de validación."
+
+            self.progressbar.set(1); self.label_estado.configure(text="¡Proceso finalizado!", text_color="green"); self.update_idletasks()
+            messagebox.showinfo("Proceso Completado", mensaje_final)
+
+        except KeyError as e: messagebox.showerror("Error de Columna", f"No se encontró la columna {e}. Revisa los encabezados en todos los archivos y hojas.")
+        except Exception as e: self.progressbar.set(0); msg = f"Ocurrió un error inesperado: {e}"; self.label_estado.configure(text=msg, text_color="red"); messagebox.showerror("Error Inesperado", msg)
+
+    def exportar_con_encabezados_de_color(self, df, ruta_destino):
+        with pd.ExcelWriter(ruta_destino, engine='xlsxwriter') as writer:
+            df.to_excel(writer, sheet_name='PAI_Transformado', index=False, header=False, startrow=1)
+            workbook = writer.book; worksheet = writer.sheets['PAI_Transformado']
+            formato_paciente = workbook.add_format({'bold': True, 'fg_color': '#DDEBF7', 'border': 1})
+            formato_biologico = workbook.add_format({'bold': True, 'fg_color': '#E2F0D9', 'border': 1})
+            formato_regla = workbook.add_format({'bold': True, 'fg_color': '#FFF2CC', 'border': 1})
+            formato_otro = workbook.add_format({'bold': True, 'fg_color': '#F2F2F2', 'border': 1})
+            mapa_columnas = {
+                'DATOS_PACIENTE': ['COD_BDUA', 'COD_SIRIS', 'REGIMEN', 'DEPARTAMENTO', 'MUNICIPIO', 'ESTADO', 'FEC_AFILIACION', 'ZONA', 'TIPO_DOC', 'NUM_DOC', 'APE1', 'APE2', 'NOM1', 'NOM2', 'Direccón', 'teléfono', 'CICLO_VIDA', 'FEC_NAC', 'GENERO', 'AÑOS', 'MESES'],
+                'BIOLOGICOS': ['BCG', 'ANTI HB', 'PENTAVALENTE 1 DOSIS', 'POLIO 1 DOSIS', 'NEUMOCOCO 1 DOSIS', 'ROTAVIRUS 1 DOSIS', 'PENTAVALENTE 2 DOSIS', 'POLIO 2 DOSIS', 'NEUMOCOCO 2 DOSIS', 'ROTAVIRUS 2 DOSIS', 'PENTAVALENTE 3 DOSIS', 'POLIO 3 DOSIS', 'TRIPLE VIRAL 1 DOSIS', 'NEUMOCOCO 3 DOSIS', 'HEPATITIS A', 'VARICELA 1 DOSIS', 'DTP 1 REF', 'POLIO 1 REF', 'FIEBRE AMARILLA', 'TRIPLE VIRAL  REF', 'POLIO 2 REF', 'DPT 2 REF', 'VARICELA REF', 'SARAMPION RUBEOLA ADICIONAL', 'POB._COVID-19', 'PRIMERA DOSIS INICIAL', 'SEGUNDA DOSIS', '1 DOSIS', '2 DOSIS', 'REFUERZO'],
+                'REGLAS_NEGOCIO': ['CLASIFICACION ESTADO', 'IPS_CONCATENADA', 'IPS_VACUNADORA', 'IPS_PRIMARIA', 'ZONA_SUSCEPTIBLE_FIEBRE_AMARILLA', 'SUCUMBIOS']
+            }
+            for col_num, col_name in enumerate(df.columns):
+                if col_name in mapa_columnas['DATOS_PACIENTE']: worksheet.write(0, col_num, col_name, formato_paciente)
+                elif col_name in mapa_columnas['BIOLOGICOS']: worksheet.write(0, col_num, col_name, formato_biologico)
+                elif col_name in mapa_columnas['REGLAS_NEGOCIO']: worksheet.write(0, col_num, col_name, formato_regla)
+                else: worksheet.write(0, col_num, col_name, formato_otro)
+            worksheet.freeze_panes(1, 0)
+            worksheet.autofit()
+
+# --- Iniciar la aplicación ---
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()

@@ -106,9 +106,9 @@ class App(customtkinter.CTk):
 
             columnas_originales = df_base.columns.tolist()
 
-            municipios_a_reemplazar = ['PUERTO SANTANDER', 'TARAPACA', 'LA PEDRERA', 'EL ENCANTO', 'LA CHORRERA',
-                                       'PUERTO ALEGRIA', 'MIRITI - PARANA']
-            df_base.loc[df_base['MUNICIPIO'].isin(municipios_a_reemplazar), 'MUNICIPIO'] = 'AMAZONAS'
+            #municipios_a_reemplazar = ['PUERTO SANTANDER', 'TARAPACA', 'LA PEDRERA', 'EL ENCANTO', 'LA CHORRERA',
+                                       #'PUERTO ALEGRIA', 'MIRITI - PARANA']
+            #df_base.loc[df_base['MUNICIPIO'].isin(municipios_a_reemplazar), 'MUNICIPIO'] = 'AMAZONAS'
 
             fec_nac_temporal = pd.to_datetime(df_base['FEC_NAC'], errors='coerce')
             edades = fec_nac_temporal.apply(lambda x: self.calcular_edad(x, fecha_corte))

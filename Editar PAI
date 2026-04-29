@@ -1,232 +1,424 @@
-import tkinter
-import customtkinter
 import pandas as pd
+import customtkinter as ctk
 from tkinter import filedialog, messagebox
-from datetime import datetime
-from pathlib import Path
-
-# --- Configuración de la apariencia ---
-customtkinter.set_appearance_mode("System")
-customtkinter.set_default_color_theme("blue")
+import threading
+import os
+from PIL import Image
 
 
-class App(customtkinter.CTk):
-    def __init__(self):
-        super().__init__()
+# --- Requisitos previos ---
+# pip install openpyxl
+# pip install XlsxWriter
+# pip install customtkinter
+# pip install Pillow
 
-        # --- Configuración de la ventana principal ---
-        self.title("Transformador PAI v11.0 (Validación Final)")
-        self.geometry(f"{750}x{520}")
-        self.resizable(False, False)
+class AppPAIUpdater:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Moderno Actualizador de Base PAI (v. Final)")
+        self.root.geometry("600x620")
+        self.root.resizable(False, False)
 
-        # --- Crear el Frame principal ---
-        self.main_frame = customtkinter.CTkFrame(self, corner_radius=15)
-        self.main_frame.pack(pady=20, padx=20, fill="both", expand=True)
-        self.main_frame.grid_columnconfigure(0, weight=1)
+        ctk.set_appearance_mode("System")
+        ctk.set_default_color_theme("blue")
 
-        # --- Widgets de la Interfaz ---
-        self.label_base = customtkinter.CTkLabel(self.main_frame, text="1. Selecciona la Base PAI (.txt):",
-                                                 font=("Arial", 14, "bold"))
-        self.label_base.grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 5), sticky="w")
-        self.entry_base = customtkinter.CTkEntry(self.main_frame, placeholder_text="Tu archivo 'base pai.txt'",
-                                                 width=450)
-        self.entry_base.grid(row=1, column=0, padx=15, pady=5, sticky="we")
-        self.boton_base = customtkinter.CTkButton(self.main_frame, text="Seleccionar...",
-                                                  command=self.seleccionar_archivo_base)
-        self.boton_base.grid(row=1, column=1, padx=15, pady=5)
+        self.icon_file = self.load_icon("icons/file.png")
+        self.icon_folder = self.load_icon("icons/folder.png")
+        self.icon_play = self.load_icon("icons/play.png")
 
-        self.label_insumos = customtkinter.CTkLabel(self.main_frame,
-                                                    text="2. Selecciona tu archivo maestro de Insumos (.xlsx):",
-                                                    font=("Arial", 14, "bold"))
-        self.label_insumos.grid(row=2, column=0, columnspan=2, padx=15, pady=(15, 5), sticky="w")
-        self.entry_insumos = customtkinter.CTkEntry(self.main_frame, placeholder_text="Tu archivo 'Insumos.xlsx'",
-                                                    width=450)
-        self.entry_insumos.grid(row=3, column=0, padx=15, pady=5, sticky="we")
-        self.boton_insumos = customtkinter.CTkButton(self.main_frame, text="Seleccionar...",
-                                                     command=self.seleccionar_archivo_insumos)
-        self.boton_insumos.grid(row=3, column=1, padx=15, pady=5)
+        self.pai_path = ctk.StringVar()
+        self.bdua_path = ctk.StringVar()
+        self.ftp_path = ctk.StringVar()
+        self.output_dir = ctk.StringVar()
+        self.output_filename = ctk.StringVar(value="BASE_PAI_ACTUALIZADA")
+        self.generate_report = ctk.BooleanVar(value=True)
+        self.export_txt = ctk.BooleanVar(value=True)
+        self.export_excel = ctk.BooleanVar(value=True)
 
-        self.label_fecha = customtkinter.CTkLabel(self.main_frame, text="3. Introduce la Fecha de Corte:",
-                                                  font=("Arial", 14, "bold"))
-        self.label_fecha.grid(row=4, column=0, columnspan=2, padx=15, pady=(15, 5), sticky="w")
-        self.entry_fecha = customtkinter.CTkEntry(self.main_frame, placeholder_text="AAAA-MM-DD (ej. 2025-08-01)")
-        self.entry_fecha.grid(row=5, column=0, columnspan=2, padx=15, pady=5, sticky="we")
+        main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
+        main_frame.pack(expand=True, fill="both", padx=20, pady=20)
 
-        self.boton_exportar = customtkinter.CTkButton(self.main_frame, text="Procesar y Exportar a Excel", height=50,
-                                                      font=("Arial", 18, "bold"), command=self.procesar_y_exportar)
-        self.boton_exportar.grid(row=6, column=0, columnspan=2, padx=15, pady=25, sticky="we")
-        self.label_estado = customtkinter.CTkLabel(self.main_frame, text="Listo para procesar.", text_color="gray")
-        self.label_estado.grid(row=7, column=0, columnspan=2, padx=15, pady=(5, 0), sticky="w")
-        self.progressbar = customtkinter.CTkProgressBar(self.main_frame)
-        self.progressbar.grid(row=8, column=0, columnspan=2, padx=15, pady=(5, 15), sticky="we")
-        self.progressbar.set(0)
+        title_label = ctk.CTkLabel(main_frame, text="Actualizador de Base PAI",
+                                   font=ctk.CTkFont(size=20, weight="bold"))
+        title_label.pack(pady=(0, 25))
 
-        self.ruta_archivo_base = ""
-        self.ruta_archivo_insumos = ""
+        self.create_file_selector(main_frame, "1. Base PAI (Estructura):", self.pai_path, self.icon_file)
+        self.create_file_selector(main_frame, "2. BDUA (Pacientes):", self.bdua_path, self.icon_file)
+        self.create_file_selector(main_frame, "3. FTP (Biológicos):", self.ftp_path, self.icon_file)
 
-    def seleccionar_archivo_base(self):
-        ruta = filedialog.askopenfilename(title="Seleccionar Base PAI",
-                                          filetypes=(("Archivos de texto", "*.txt"), ("Todos", "*.*")))
-        if ruta: self.ruta_archivo_base = ruta; self.entry_base.delete(0, "end"); self.entry_base.insert(0, ruta)
+        self.create_directory_selector(main_frame, "4. Carpeta de Salida:", self.output_dir, self.icon_folder)
+        self.create_text_entry(main_frame, "5. Nombre de Archivos:", self.output_filename)
 
-    def seleccionar_archivo_insumos(self):
-        ruta = filedialog.askopenfilename(title="Seleccionar Archivo de Insumos",
-                                          filetypes=(("Archivos Excel", "*.xlsx"),))
-        if ruta: self.ruta_archivo_insumos = ruta; self.entry_insumos.delete(0, "end"); self.entry_insumos.insert(0,
-                                                                                                                  ruta)
+        export_frame = ctk.CTkFrame(main_frame)
+        export_frame.pack(pady=15, padx=10, fill="x")
 
-    def calcular_edad(self, fecha_nac, fecha_corte):
-        if pd.isna(fecha_nac): return 0, 0
-        años = fecha_corte.year - fecha_nac.year
-        if (fecha_corte.month, fecha_corte.day) < (fecha_nac.month, fecha_nac.day): años -= 1
-        meses_totales = (fecha_corte.year - fecha_nac.year) * 12 + (fecha_corte.month - fecha_nac.month)
-        if fecha_corte.day < fecha_nac.day: meses_totales -= 1
-        return años, meses_totales
+        export_label = ctk.CTkLabel(export_frame, text="Formatos de Salida:", font=ctk.CTkFont(weight="bold"))
+        export_label.pack(pady=(5, 10))
 
-    def procesar_y_exportar(self):
-        if not self.ruta_archivo_base or not self.ruta_archivo_insumos: messagebox.showwarning("Atención",
-                                                                                               "Por favor, selecciona ambos archivos."); return
-        fecha_corte_str = self.entry_fecha.get()
-        if not fecha_corte_str: messagebox.showwarning("Atención", "Por favor, introduce una fecha de corte."); return
+        txt_check = ctk.CTkCheckBox(export_frame, text="Exportar a TXT (delimitado por tabulaciones)",
+                                    variable=self.export_txt)
+        txt_check.pack(anchor="w", padx=20, pady=5)
+
+        excel_check = ctk.CTkCheckBox(export_frame, text="Exportar a Excel (.xlsx)", variable=self.export_excel)
+        excel_check.pack(anchor="w", padx=20, pady=(5, 10))
+
+        report_check = ctk.CTkCheckBox(main_frame, text="Generar reporte de cambios detallado (recomendado)",
+                                       variable=self.generate_report)
+        report_check.pack(pady=10, anchor="w")
+
+        process_button = ctk.CTkButton(main_frame, text="Generar Archivos", command=self.start_processing,
+                                       height=40, font=ctk.CTkFont(size=14, weight="bold"), image=self.icon_play)
+        process_button.pack(pady=10, fill="x")
+
+        self.progress = ctk.CTkProgressBar(main_frame, orientation="horizontal")
+        self.progress.set(0)
+        self.progress.pack(pady=10, fill="x")
+
+        self.status_label = ctk.CTkLabel(main_frame, text="Listo para iniciar. ✨", anchor="center")
+        self.status_label.pack(pady=(10, 0), fill="x")
+
+    def universal_date_parser(self, date_val):
+        if pd.isna(date_val) or str(date_val).strip() == '':
+            return pd.NaT
+
+        date_str = str(date_val).strip()
+
+        formats_to_try = [
+            '%Y-%m-%d',
+            '%Y/%m/%d',
+            '%d/%m/%Y',
+            '%d-%m-%Y',
+        ]
+
+        for fmt in formats_to_try:
+            try:
+                return pd.to_datetime(date_str, format=fmt)
+            except (ValueError, TypeError):
+                continue
+
         try:
-            fecha_corte = datetime.strptime(fecha_corte_str, '%Y-%m-%d')
-        except ValueError:
-            messagebox.showerror("Error de Formato", "La fecha de corte debe tener el formato AAAA-MM-DD."); return
+            return pd.to_datetime(date_str, dayfirst=True)
+        except (ValueError, TypeError):
+            return pd.NaT
 
+    def load_icon(self, path, size=(20, 20)):
         try:
-            self.progressbar.set(0);
-            self.label_estado.configure(text="Iniciando proceso...", text_color="orange");
-            self.update_idletasks()
+            return ctk.CTkImage(Image.open(path), size=size)
+        except FileNotFoundError:
+            print(f"Advertencia: No se encontró el ícono en la ruta: {path}")
+            return None
 
-            df_base = pd.read_csv(self.ruta_archivo_base, sep='\t', engine='python',
-                                  dtype={'COD_BDUA': str, 'COD_SIRIS': str, 'NUM_DOC': str})
-            df_ips = pd.read_excel(self.ruta_archivo_insumos, sheet_name='IPS Vacunadoras')
-            df_sucumbios = pd.read_excel(self.ruta_archivo_insumos, sheet_name='Sucumbios')
-            df_validacion = pd.read_excel(self.ruta_archivo_insumos, sheet_name='Validacion')
+    def create_file_selector(self, parent, label_text, var, icon):
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", pady=5)
+        label = ctk.CTkLabel(frame, text=label_text, width=180, anchor="w")
+        label.pack(side="left")
+        entry = ctk.CTkEntry(frame, textvariable=var, state="disabled")
+        entry.pack(side="left", expand=True, fill="x", padx=10)
+        button = ctk.CTkButton(frame, text="", image=icon, width=32,
+                               command=lambda: self.browse_file(var, "Seleccionar archivo"))
+        button.pack(side="right")
 
-            columnas_originales = df_base.columns.tolist()
+    def create_directory_selector(self, parent, label_text, var, icon):
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", pady=5)
+        label = ctk.CTkLabel(frame, text=label_text, width=180, anchor="w")
+        label.pack(side="left")
+        entry = ctk.CTkEntry(frame, textvariable=var, state="disabled")
+        entry.pack(side="left", expand=True, fill="x", padx=10)
+        button = ctk.CTkButton(frame, text="", image=icon, width=32,
+                               command=lambda: self.browse_directory(var, "Seleccionar carpeta de destino"))
+        button.pack(side="right")
 
-            municipios_a_reemplazar = ['PUERTO SANTANDER', 'TARAPACA', 'LA PEDRERA', 'EL ENCANTO', 'LA CHORRERA',
-                                       'PUERTO ALEGRIA', 'MIRITI - PARANA']
-            df_base.loc[df_base['MUNICIPIO'].isin(municipios_a_reemplazar), 'MUNICIPIO'] = 'AMAZONAS'
+    def create_text_entry(self, parent, label_text, var):
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", pady=5)
+        label = ctk.CTkLabel(frame, text=label_text, width=180, anchor="w")
+        label.pack(side="left")
+        entry = ctk.CTkEntry(frame, textvariable=var)
+        entry.pack(side="left", expand=True, fill="x", padx=10)
 
-            fec_nac_temporal = pd.to_datetime(df_base['FEC_NAC'], errors='coerce')
-            edades = fec_nac_temporal.apply(lambda x: self.calcular_edad(x, fecha_corte))
-            df_base['AÑOS'], df_base['MESES'] = [e[0] for e in edades], [e[1] for e in edades]
+    def browse_file(self, var, title):
+        filename = filedialog.askopenfilename(title=title, filetypes=[("Archivos de Texto y CSV", "*.txt *.csv"),
+                                                                      ("Todos los archivos", "*.*")])
+        if filename:
+            var.set(os.path.basename(filename))
+            setattr(self, f"full_path_{id(var)}", filename)
 
-            df_base['CLASIFICACION ESTADO'] = '1'
-            deptos_fa = ["AMAZONAS", "VAUPES", "META", "VICHADA", "PUTUMAYO", "HUILA", "TOLIMA"]
-            df_base.loc[df_base['DEPARTAMENTO'].str.upper().isin(deptos_fa), 'ZONA_SUSCEPTIBLE_FIEBRE_AMARILLA'] = 'SI'
-            siris_sucumbios = set(df_sucumbios['codsiris'].astype(str))
-            df_base.loc[df_base['COD_SIRIS'].isin(siris_sucumbios), 'SUCUMBIOS'] = 'SI'
+    def browse_directory(self, var, title):
+        directory = filedialog.askdirectory(title=title)
+        if directory:
+            var.set(directory)
 
-            df_final = pd.merge(df_base, df_ips, on=['DEPARTAMENTO', 'MUNICIPIO', 'IPS_PRIMARIA'], how='left',
-                                suffixes=('', '_nueva'))
-            df_final['IPS_VACUNADORA'] = df_final['IPS_VACUNADORA_nueva'].fillna(df_final['IPS_VACUNADORA'])
+    def get_full_path(self, var):
+        return getattr(self, f"full_path_{id(var)}", var.get())
 
-            for col in ['CLASIFICACION ESTADO', 'DEPARTAMENTO', 'MUNICIPIO', 'IPS_VACUNADORA']: df_final[col] = \
-            df_final[col].astype(str)
-            df_final['IPS_CONCATENADA'] = df_final[
-                ['CLASIFICACION ESTADO', 'DEPARTAMENTO', 'MUNICIPIO', 'IPS_VACUNADORA']].agg(''.join, axis=1)
+    def start_processing(self):
+        if not all([self.pai_path.get(), self.bdua_path.get(), self.ftp_path.get(), self.output_dir.get(),
+                    self.output_filename.get()]):
+            messagebox.showerror("Error", "Por favor, completa todos los campos de archivos y carpetas.")
+            return
 
-            columnas_validacion = ['DEPARTAMENTO', 'MUNICIPIO', 'IPS VACUNADORA']
-            for col in columnas_validacion: df_validacion[col] = df_validacion[col].astype(str)
-            df_validacion['llave_valida'] = df_validacion[columnas_validacion].agg(''.join, axis=1)
-            ips_validas = set(df_validacion['llave_valida'])
-            df_final['llave_temporal'] = df_final['DEPARTAMENTO'] + df_final['MUNICIPIO'] + df_final['IPS_VACUNADORA']
-            df_final['ES_VALIDA'] = df_final['llave_temporal'].isin(ips_validas)
-            df_final['ESTADO_VALIDACION'] = df_final['ES_VALIDA'].apply(lambda x: 'VALIDO' if x else 'ERROR')
+        if not self.export_txt.get() and not self.export_excel.get():
+            messagebox.showerror("Error de Exportación",
+                                 "Debes seleccionar al menos un formato de salida (TXT o Excel).")
+            return
 
-            # --- PREPARACIÓN FINAL DE DATOS Y ERRORES ---
-            # 1. El DataFrame final contiene TODAS las filas y la nueva columna de estado
-            df_para_exportar = df_final[columnas_originales + ['ESTADO_VALIDACION']]
+        thread = threading.Thread(target=self.process_files)
+        thread.start()
 
-            # 2. El reporte de errores se crea aparte, solo si hay errores
-            df_errores_raw = df_final[df_final['ES_VALIDA'] == False]
-            df_reporte_errores = pd.DataFrame()
-            if not df_errores_raw.empty:
-                columnas_reporte = ['DEPARTAMENTO', 'MUNICIPIO', 'IPS_VACUNADORA']
-                df_reporte_errores = df_errores_raw[columnas_reporte].drop_duplicates().reset_index(drop=True)
+    def process_files(self):
+        try:
+            self.cambios_log = []
+            self.status_label.configure(text="Iniciando proceso...")
+            self.progress.set(0)
 
-            ruta_destino = filedialog.asksaveasfilename(defaultextension=".xlsx",
-                                                        filetypes=[("Archivo de Excel", "*.xlsx")],
-                                                        title="Guardar archivo principal como...")
-            if not ruta_destino: self.progressbar.set(0); self.label_estado.configure(text="Exportación cancelada.",
-                                                                                      text_color="gray"); return
+            def standardize_column(df, potential_names, target_name, file_type):
+                df_renamed = df.copy()
+                for name in potential_names:
+                    if name in df_renamed.columns:
+                        df_renamed.rename(columns={name: target_name}, inplace=True)
+                        return df_renamed
+                raise ValueError(
+                    f"Error en el archivo {file_type}:\n\nNo se encontró la columna para '{target_name}'. Se buscaron los nombres: {potential_names}.\n\nPor favor, revisa el archivo.")
 
-            # Exportar el archivo principal con TODAS las filas
-            self.exportar_con_marcado_de_errores(df_para_exportar, ruta_destino)
+            mapa_columnas_bdua = {'Serial_BDUA': 'COD_BDUA', 'Codigo_Entidad': 'REGIMEN',
+                                  'Primerapellido_afiliado': 'APE1', 'Segundoapellido_afiliado': 'APE2',
+                                  'Primernombre_afiliado': 'NOM1', 'Segundonombre_afiliado': 'NOM2',
+                                  'Fec_Nac_Afiliado': 'FEC_NAC', 'Sexo_afiliado': 'GENERO',
+                                  'Departamento': 'DEPARTAMENTO', 'Municipio': 'MUNICIPIO', 'Zona': 'ZONA',
+                                  'Fecha_Afiliación': 'FEC_AFILIACION', 'Estado_Afiliacion': 'ESTADO',
+                                  'NombreRazonSocial': 'IPS_PRIMARIA', 'Direccion_Residencia': 'Direccón',
+                                  'Telefonocel1': 'teléfono', 'Curso de Vida': 'CICLO_VIDA', 'Edad en años': 'AÑOS',
+                                  'Edad en meses': 'MESES'}
+            equivalencias_bio = {
+                "BCG": ["BCGUnica"],
+                "ANTI HB": ["HepatitisBPediatricaAdicional"],
 
-            mensaje_final = f"Proceso completado.\n\nArchivo principal con {len(df_para_exportar)} registros guardado en:\n{ruta_destino}"
+                # Pentavalente
+                "PENTAVALENTE 1 DOSIS": ["PentavalentePAIPrimera"],
+                "PENTAVALENTE 2 DOSIS": ["PentavalentePAISegunda"],
+                "PENTAVALENTE 3 DOSIS": ["PentavalentePAITercera"],
+                "PENTAVALENTE REFUERZO": ["PentavalentePAIPrimerRefuerzo"],
 
-            # Exportar el reporte de errores si es necesario
-            if not df_reporte_errores.empty:
-                nombre_archivo_errores = f"ERRORES_COMBINACIONES_{Path(ruta_destino).name}"
-                ruta_errores = Path(ruta_destino).with_name(nombre_archivo_errores)
-                df_reporte_errores.to_excel(ruta_errores, index=False)
-                mensaje_final += f"\n\n¡Atención! Se encontraron {len(df_reporte_errores)} combinaciones no válidas.\nSe generó un reporte de errores en:\n{ruta_errores}"
-            else:
-                mensaje_final += "\n\n¡Excelente! No se encontraron errores de validación."
+                # Polios (Mapeo doble para asegurar captura de VOP o VIP)
+                "POLIO 1 DOSIS": ["AntipolioInactivoVIPPrimera", "AntipolioOralVOPPrimera"],
+                "POLIO 2 DOSIS": ["AntipolioInactivoVIPSegunda", "AntipolioOralVOPSegunda"],
+                "POLIO 3 DOSIS": ["AntipolioInactivoVIPTercera", "AntipolioOralVOPTercera"],
+                "POLIO 1 REF": ["AntipolioInactivoVIPPrimerRefuerzo", "AntipolioOralVOPPrimerRefuerzo"],
+                "POLIO 2 REF": ["AntipolioInactivoVIPSegundoRefuerzo", "AntipolioOralVOPSegundoRefuerzo"],
 
-            self.progressbar.set(1);
-            self.label_estado.configure(text="¡Proceso finalizado!", text_color="green");
-            self.update_idletasks()
-            messagebox.showinfo("Proceso Completado", mensaje_final)
+                # Neumococo (Unificación de 10V y 13V)
+                "NEUMOCOCO 1 DOSIS": ["NeumococoConjugado10valentePrimera", "Neumococo13valentePrimera"],
+                "NEUMOCOCO 2 DOSIS": ["NeumococoConjugado10valenteSegunda", "Neumococo13valenteSegunda"],
+                "NEUMOCOCO 3 DOSIS": ["NeumococoConjugado10valenteRefuerzo", "Neumococo13valenteRefuerzo"],
 
-        except KeyError as e:
-            messagebox.showerror("Error de Columna",
-                                 f"No se encontró la columna {e}. Revisa los encabezados en todos los archivos y hojas.")
-        except Exception as e:
-            self.progressbar.set(0); msg = f"Ocurrió un error inesperado: {e}"; self.label_estado.configure(text=msg,
-                                                                                                            text_color="red"); messagebox.showerror(
-                "Error Inesperado", msg)
+                # Rotavirus
+                "ROTAVIRUS 1 DOSIS": ["RotavirusPrimera"],
+                "ROTAVIRUS 2 DOSIS": ["RotavirusSegunda"],
 
-    def exportar_con_marcado_de_errores(self, df, ruta_destino):
-        with pd.ExcelWriter(ruta_destino, engine='xlsxwriter') as writer:
-            df.to_excel(writer, sheet_name='PAI_Transformado', index=False, header=False, startrow=1)
-            workbook = writer.book
-            worksheet = writer.sheets['PAI_Transformado']
+                # Hexavalente
+                "HEXAVALENTE 1 DOSIS": ["HexavalentePrimera"],
+                "HEXAVALENTE 2 DOSIS": ["HexavalenteSegunda"],
+                "HEXAVALENTE 3 DOSIS": ["HexavalenteTercera"],
 
-            formato_error = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+                # Influenza Pediátrica
+                "Influenza 6 a 23 1 DOSIS": ["InfluenzaTrivalentePediatricaPrimeraPrimera"],
+                "Influenza 6 a 23 2 DOSIS": ["InfluenzaTrivalentePediatricaPrimeraSegunda"],
+                "Influenza 6 a 23 REFUERZO": ["InfluenzaTrivalentePediatricaRefuerzo"],
 
-            # Aplicar formato rojo a las filas con 'ERROR' en la última columna
-            for row_num, estado in enumerate(df['ESTADO_VALIDACION']):
-                if estado == 'ERROR':
-                    worksheet.set_row(row_num + 1, None, formato_error)
+                # Otras Virales y Bacterianas
+                "TRIPLE VIRAL 1 DOSIS": ["TripleViralPrimera"],
+                "TRIPLE VIRAL  REF": ["TripleViralRefuerzo"],
+                "HEPATITIS A": ["HepatitisAPediatricaUnica"],
+                "VARICELA 1 DOSIS": ["VaricelaPrimera"],
+                "VARICELA REF": ["VaricelaRefuerzo"],
+                "DTP 1 REF": ["DPTPrimerRefuerzo"],
+                "DPT 2 REF": ["DPTSegundoRefuerzo"],
+                "FIEBRE AMARILLA": ["FiebreAmarillaUnica"],
+                "SARAMPION RUBEOLA ADICIONAL": ["SarampionRubeolaAdicional"],
 
-            formato_paciente = workbook.add_format({'bold': True, 'fg_color': '#DDEBF7', 'border': 1})
-            formato_biologico = workbook.add_format({'bold': True, 'fg_color': '#E2F0D9', 'border': 1})
-            formato_regla = workbook.add_format({'bold': True, 'fg_color': '#FFF2CC', 'border': 1})
-            formato_otro = workbook.add_format({'bold': True, 'fg_color': '#F2F2F2', 'border': 1})
-            mapa_columnas = {
-                'DATOS_PACIENTE': ['COD_BDUA', 'COD_SIRIS', 'REGIMEN', 'DEPARTAMENTO', 'MUNICIPIO', 'ESTADO',
-                                   'FEC_AFILIACION', 'ZONA', 'TIPO_DOC', 'NUM_DOC', 'APE1', 'APE2', 'NOM1', 'NOM2',
-                                   'Direccón', 'teléfono', 'CICLO_VIDA', 'FEC_NAC', 'GENERO', 'AÑOS', 'MESES'],
-                'BIOLOGICOS': ['BCG', 'ANTI HB', 'PENTAVALENTE 1 DOSIS', 'POLIO 1 DOSIS', 'NEUMOCOCO 1 DOSIS',
-                               'ROTAVIRUS 1 DOSIS', 'PENTAVALENTE 2 DOSIS', 'POLIO 2 DOSIS', 'NEUMOCOCO 2 DOSIS',
-                               'ROTAVIRUS 2 DOSIS', 'PENTAVALENTE 3 DOSIS', 'POLIO 3 DOSIS', 'TRIPLE VIRAL 1 DOSIS',
-                               'NEUMOCOCO 3 DOSIS', 'HEPATITIS A', 'VARICELA 1 DOSIS', 'DTP 1 REF', 'POLIO 1 REF',
-                               'FIEBRE AMARILLA', 'TRIPLE VIRAL  REF', 'POLIO 2 REF', 'DPT 2 REF', 'VARICELA REF',
-                               'SARAMPION RUBEOLA ADICIONAL', 'POB._COVID-19', 'PRIMERA DOSIS INICIAL', 'SEGUNDA DOSIS',
-                               '1 DOSIS', '2 DOSIS', 'REFUERZO'],
-                'REGLAS_NEGOCIO': ['CLASIFICACION ESTADO', 'IPS_CONCATENADA', 'IPS_VACUNADORA', 'IPS_PRIMARIA',
-                                   'ZONA_SUSCEPTIBLE_FIEBRE_AMARILLA', 'SUCUMBIOS', 'ESTADO_VALIDACION']
+                # VPH
+                "VPH PRIMERA DOSIS INICIAL": ["VPHPrimera"],
+                "VPH SEGUNDA DESPUES DE 6 MESES": ["VPHSegunda"],
+
+                # Adultos y Gestantes
+                "TD1: DOSIS INICIAL": ["TDAdultoPrimera"],
+                "TD2: AL MES DE TD1": ["TDAdultoSegunda"],
+                "TD3: a los 6 medes de TD3 ": ["TDAdultoTercera"],
+                "TD4:  al año  de TD3": ["TDAdultoCuarta"],
+                "TD5: al año de TD4": ["TDAdultoQuinta"],
+                "REF cada 10 años ": ["TDAdultoPrimerRefuerzo"],
+                "INFLUENZA ESTACIONAL": ["InfluenzaTrivalenteAdultosAnual"],
+                "TDAP": ["TdaPAcelularGestanteAnual"],
+
+                # Covid (Ajustado a las nuevas columnas de variantes)
+                "Covid 19 1 dosis": ["COVIDModernaJN1Primera"],
+                "covid 19 2 dosis": ["COVIDModernaJN1Segunda"],
+                "Covid 19 1 Refuerzo": [
+                    "COVIDPfizerJN1Adicional",
+                    "COVIDModernaJN1Adicional",
+                    "COVIDPfizerLP81Adicional"
+                ]
             }
-            for col_num, col_name in enumerate(df.columns):
-                if col_name in mapa_columnas['DATOS_PACIENTE']:
-                    worksheet.write(0, col_num, col_name, formato_paciente)
-                elif col_name in mapa_columnas['BIOLOGICOS']:
-                    worksheet.write(0, col_num, col_name, formato_biologico)
-                elif col_name in mapa_columnas['REGLAS_NEGOCIO']:
-                    worksheet.write(0, col_num, col_name, formato_regla)
-                else:
-                    worksheet.write(0, col_num, col_name, formato_otro)
 
-            worksheet.freeze_panes(1, 0)
-            worksheet.autofit()
+            self.status_label.configure(text="Paso 1/5: Cargando y estandarizando archivos...")
+            self.progress.set(0.1)
+
+            pai_full_path = self.get_full_path(self.pai_path)
+            bdua_full_path = self.get_full_path(self.bdua_path)
+            ftp_full_path = self.get_full_path(self.ftp_path)
+
+            base_pai_df = pd.read_csv(pai_full_path, sep='\t', on_bad_lines='warn', dtype=str, encoding='latin-1')
+            bdua_df = pd.read_csv(bdua_full_path, sep='\t', on_bad_lines='warn', dtype=str, encoding='latin-1')
+            ftp_df = pd.read_csv(ftp_full_path, sep='|', on_bad_lines='warn', dtype=str, encoding='latin-1')
+
+            for df in [base_pai_df, bdua_df, ftp_df]: df.columns = df.columns.str.strip()
+            pai_original_columns = base_pai_df.columns.tolist()
+            base_pai_df = standardize_column(base_pai_df, ['NUMERO DOCUMENTO', 'NUM_DOC', 'Documento'], 'NUM_DOC',
+                                             'Base PAI')
+            bdua_df = standardize_column(bdua_df, ['Numeroidentificación_afiliado', 'NUM_DOC'], 'NUM_DOC', 'BDUA')
+            ftp_df = standardize_column(ftp_df, ['Documento', 'NUM_DOC'], 'NUM_DOC', 'FTP')
+            bdua_df = standardize_column(bdua_df, ['Tipodocumento_afiliado', 'TIPO_DOC', 'TIPO'], 'TIPO', 'BDUA')
+            ftp_df = standardize_column(ftp_df, ['TipoIdentificacion', 'Tipo Documento', 'TIPO_DOC', 'TIPO'], 'TIPO',
+                                        'FTP')
+            bdua_df = standardize_column(bdua_df, ['codsiris', 'COD_SIRIS'], 'COD_SIRIS', 'BDUA')
+            base_pai_df = standardize_column(base_pai_df, ['codsiris', 'COD_SIRIS'], 'COD_SIRIS', 'Base PAI')
+            for df in [base_pai_df, bdua_df, ftp_df]:
+                if 'NUM_DOC' in df.columns: df['NUM_DOC'] = df['NUM_DOC'].str.strip()
+                if 'TIPO' in df.columns: df['TIPO'] = df['TIPO'].str.strip()
+                if 'COD_SIRIS' in df.columns: df['COD_SIRIS'] = df['COD_SIRIS'].str.strip()
+            self.progress.set(0.25)
+            self.status_label.configure(text="Paso 2/5: Eliminando duplicados y cruzando por COD_SIRIS...")
+            bdua_unique_df = bdua_df.drop_duplicates(subset=['COD_SIRIS']).copy()
+            base_pai_unique_df = base_pai_df.drop_duplicates(subset=['COD_SIRIS']).copy()
+            master_patients = bdua_unique_df[['COD_SIRIS']].copy()
+            df_merged = pd.merge(master_patients, bdua_unique_df, on='COD_SIRIS', how='left')
+            df_merged = pd.merge(df_merged, base_pai_unique_df, on='COD_SIRIS', how='left', suffixes=('_bdua', '_pai'))
+            df_merged['NUM_DOC'] = df_merged['NUM_DOC_bdua'].fillna(df_merged['NUM_DOC_pai'])
+            df_merged['TIPO'] = df_merged['TIPO_bdua'].fillna(df_merged['TIPO_pai'])
+            df_merged.rename(columns=mapa_columnas_bdua, inplace=True)
+            for col in pai_original_columns:
+                col_pai = col + '_pai' if col + '_pai' in df_merged.columns else col
+                if col in df_merged.columns and col_pai in df_merged.columns and col != col_pai:
+                    if self.generate_report.get():
+                        cambios_df = df_merged[(df_merged[col].notna()) & (df_merged[col] != df_merged[col_pai])][
+                            ['NUM_DOC', col_pai, col]].copy()
+                        for _, row in cambios_df.iterrows(): self.cambios_log.append(
+                            {'NUM_DOC': row['NUM_DOC'], 'CAMPO_MODIFICADO': col, 'VALOR_ANTERIOR': str(row[col_pai]),
+                             'VALOR_NUEVO': str(row[col]), 'FUENTE': 'BDUA'})
+
+                        # --- LÍNEA CORREGIDA PARA ELIMINAR EL FUTUREWARNING ---
+                    df_merged[col] = df_merged[col].fillna(df_merged[col_pai])
+
+            base_actualizada = df_merged
+            cols_to_drop = [col for col in base_actualizada.columns if col.endswith('_bdua') or col.endswith('_pai')]
+            base_actualizada.drop(columns=cols_to_drop, inplace=True)
+            self.progress.set(0.4)
+            # --- REEMPLAZA LA SECCIÓN DEL PASO 3 CON ESTO ---
+            self.status_label.configure(text="Paso 3/5: Actualizando biológicos por Documento y Tipo...")
+            total_cols = len(equivalencias_bio)
+
+            for i, (pai_col, ftp_cols) in enumerate(equivalencias_bio.items()):
+                if pai_col in pai_original_columns:
+                    if pai_col in base_actualizada.columns:
+                        base_actualizada[pai_col] = base_actualizada[pai_col].apply(self.universal_date_parser)
+
+                    # 1. Filtramos las columnas que necesitamos del FTP
+                    valid_ftp_cols = [c for c in ftp_cols if c in ftp_df.columns]
+
+                    if valid_ftp_cols:
+                        ftp_subset = ftp_df[['NUM_DOC', 'TIPO'] + valid_ftp_cols].copy()
+
+                        # 2. Convertimos todas las columnas de fecha del FTP a formato datetime
+                        for col in valid_ftp_cols:
+                            ftp_subset[col] = ftp_subset[col].apply(self.universal_date_parser)
+
+                        # 3. Calculamos la fecha máxima por FILA en el FTP
+                        ftp_subset['max_date_fila'] = ftp_subset[valid_ftp_cols].max(axis=1)
+
+                        # 4. ¡ESTA ES LA CLAVE!: Agrupamos por paciente y nos quedamos con la fecha máxima de todas sus filas
+                        ftp_max_per_patient = ftp_subset.groupby(['NUM_DOC', 'TIPO'])[
+                            'max_date_fila'].max().reset_index()
+                        ftp_max_per_patient.rename(columns={'max_date_fila': 'max_date_ftp'}, inplace=True)
+
+                        # 5. Cruzamos con la base actualizada
+                        base_actualizada = pd.merge(base_actualizada, ftp_max_per_patient, on=['NUM_DOC', 'TIPO'],
+                                                    how='left')
+
+                        # 6. Lógica de comparación (Reporte)
+                        if self.generate_report.get() and pai_col in base_actualizada.columns:
+                            mask_cambio = (base_actualizada['max_date_ftp'].notna()) & (
+                                    (pd.isna(base_actualizada[pai_col])) | (
+                                        base_actualizada['max_date_ftp'] > base_actualizada[pai_col])
+                            )
+                            cambios_ftp_df = base_actualizada[mask_cambio].copy()
+
+                            for _, row in cambios_ftp_df.iterrows():
+                                val_ant = '' if pd.isna(row[pai_col]) else row[pai_col].strftime('%d/%m/%Y')
+                                val_nue = row['max_date_ftp'].strftime('%d/%m/%Y')
+                                if val_ant != val_nue:
+                                    self.cambios_log.append({
+                                        'NUM_DOC': row['NUM_DOC'], 'CAMPO_MODIFICADO': pai_col,
+                                        'VALOR_ANTERIOR': val_ant, 'VALOR_NUEVO': val_nue, 'FUENTE': 'FTP'
+                                    })
+
+                        # 7. Actualizamos la columna con el valor más reciente
+                        if pai_col in base_actualizada.columns:
+                            base_actualizada[pai_col] = base_actualizada[[pai_col, 'max_date_ftp']].max(axis=1)
+                        else:
+                            base_actualizada[pai_col] = base_actualizada['max_date_ftp']
+
+                        base_actualizada.drop(columns=['max_date_ftp'], inplace=True)
+
+                self.progress.set(0.4 + (((i + 1) / total_cols) * 0.5))
+            self.status_label.configure(text="Paso 4/5: Reconstruyendo estructura final...")
+            columnas_finales = [col for col in pai_original_columns if col in base_actualizada.columns]
+            final_df = base_actualizada[columnas_finales].copy()
+            for col in final_df.select_dtypes(include=['datetime64[ns]']).columns: final_df[col] = final_df[
+                col].dt.strftime('%d/%m/%Y')
+            final_df.fillna('', inplace=True)
+            valores_a_eliminar = ['0/01/1900', '#N/D', '00/01/1900']
+            final_df.replace(valores_a_eliminar, '', inplace=True)
+            final_df = final_df.loc[:, ~final_df.columns.duplicated(keep='first')]
+            self.status_label.configure(text="Paso 5/5: Guardando archivos...")
+            self.progress.set(0.95)
+            output_dir = self.output_dir.get()
+            base_filename = self.output_filename.get()
+
+            info_message_parts = []
+            if self.export_txt.get():
+                txt_path = os.path.join(output_dir, f"{base_filename}.txt")
+                final_df.to_csv(txt_path, index=False, sep='\t')
+                info_message_parts.append(f"- {txt_path}")
+
+            if self.export_excel.get():
+                xlsx_path = os.path.join(output_dir, f"{base_filename}.xlsx")
+                final_df.to_excel(xlsx_path, index=False, engine='xlsxwriter')
+                info_message_parts.append(f"- {xlsx_path}")
+
+            info_message = "Archivos generados correctamente en:\n\n" + "\n".join(info_message_parts)
+
+            if self.generate_report.get() and self.cambios_log:
+                reporte_df = pd.DataFrame(self.cambios_log)
+                reporte_df = reporte_df[['NUM_DOC', 'CAMPO_MODIFICADO', 'VALOR_ANTERIOR', 'VALOR_NUEVO', 'FUENTE']]
+                reporte_path = os.path.join(output_dir, f"REPORTE_DE_CAMBIOS_{base_filename}.xlsx")
+                reporte_df.to_excel(reporte_path, index=False, engine='xlsxwriter')
+                info_message += f"\n\n- Reporte de cambios:\n  {reporte_path}"
+
+            self.progress.set(1.0)
+            self.status_label.configure(text="¡Proceso completado con éxito! ✅")
+            messagebox.showinfo("Éxito", info_message)
+
+        except Exception as e:
+            self.status_label.configure(text="Error durante el proceso. ❌")
+            messagebox.showerror("Error",
+                                 f"Ocurrió un error inesperado:\n\n{e}\n\nPor favor, revisa los archivos y los nombres de las columnas.")
+        finally:
+            self.progress.set(0)
 
 
-# --- Iniciar la aplicación ---
 if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    root = ctk.CTk()
+    app = AppPAIUpdater(root)
+    root.mainloop()
